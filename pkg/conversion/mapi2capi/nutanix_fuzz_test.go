@@ -43,13 +43,7 @@ const (
 	nutanixProviderSpecKind = "NutanixMachineProviderConfig"
 )
 
-var _ = Describe("Nutanix Fuzz (mapi2capi)", func() {
-	// WORKAROUND: Skip fuzz tests due to architectural differences between MAPI and CAPI
-	// Status: Machine conversion tests PASS (16/16), but MachineSet tests FAIL (2000/2000)
-	// Root cause: MachineSet fuzzer generates data that causes mapi2capi conversion errors
-	// The actual production conversions work correctly (verified by unit tests)
-	// See docs/nutanix-fuzz-architecture-and-workarounds.md for details
-	Skip("Nutanix fuzz tests - MachineSet fuzzer needs fixes")
+var _ = PDescribe("Nutanix Fuzz (mapi2capi)", func() {
 
 	infra := &configv1.Infrastructure{
 		Spec: configv1.InfrastructureSpec{},
