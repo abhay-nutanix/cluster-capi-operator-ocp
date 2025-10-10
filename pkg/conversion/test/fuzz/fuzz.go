@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	configv1 "github.com/openshift/api/config/v1"
-	mapiv1 "github.com/openshift/api/machine/v1beta1"
+	mapiv1beta1 "github.com/openshift/api/machine/v1beta1"
 	"github.com/openshift/cluster-api-actuator-pkg/testutils"
 	"github.com/openshift/cluster-capi-operator/pkg/conversion/capi2mapi"
 	"github.com/openshift/cluster-capi-operator/pkg/conversion/mapi2capi"
@@ -59,10 +59,10 @@ type CAPI2MAPIMachineConverterConstructor func(*clusterv1.Machine, client.Object
 type CAPI2MAPIMachineSetConverterConstructor func(*clusterv1.MachineSet, client.Object, client.Object) capi2mapi.MachineSetAndMachineTemplate
 
 // MAPI2CAPIMachineConverterConstructor is a function that constructs a MAPI to CAPI Machine converter.
-type MAPI2CAPIMachineConverterConstructor func(*mapiv1.Machine, *configv1.Infrastructure) mapi2capi.Machine
+type MAPI2CAPIMachineConverterConstructor func(*mapiv1beta1.Machine, *configv1.Infrastructure) mapi2capi.Machine
 
 // MAPI2CAPIMachineSetConverterConstructor is a function that constructs a MAPI to CAPI MachineSet converter.
-type MAPI2CAPIMachineSetConverterConstructor func(*mapiv1.MachineSet, *configv1.Infrastructure) mapi2capi.MachineSet
+type MAPI2CAPIMachineSetConverterConstructor func(*mapiv1beta1.MachineSet, *configv1.Infrastructure) mapi2capi.MachineSet
 
 // StringFuzzer is a function that returns a random string.
 type StringFuzzer func(randfill.Continue) string
@@ -124,7 +124,7 @@ func CAPI2MAPIMachineRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv1.I
 
 		// Break down the comparison to make it easier to debug sections that are failing conversion.
 
-		// Do not match on status yet, we do not support status conversion.
+		// Status comparison for infrastructure machines is not implemented yet.
 		// Expect(capiMachine.Status).To(Equal(in.machine.Status))
 		// Expect(infraMachine.Status).To(Equal(in.infraMachine.Status))
 
@@ -160,6 +160,8 @@ type capiToMapiMachineSetFuzzInput struct {
 // It leverages fuzz testing to generate random CAPI objects and then converts them to MAPI objects and back to CAPI objects.
 // The test then compares the original CAPI object with the final CAPI object to ensure that the conversion is lossless.
 // Any lossy conversions must be accounted for within the fuzz functions passed in.
+//
+//nolint:funlen
 func CAPI2MAPIMachineSetRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv1.Infrastructure, infraCluster, infraMachineTemplate client.Object, mapiConverter MAPI2CAPIMachineSetConverterConstructor, capiConverter CAPI2MAPIMachineSetConverterConstructor, fuzzerFuncs ...fuzzer.FuzzerFuncs) {
 	machineFuzzInputs := []TableEntry{}
 	fz := getFuzzer(scheme, fuzzerFuncs...)
@@ -196,8 +198,7 @@ func CAPI2MAPIMachineSetRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv
 
 		// Break down the comparison to make it easier to debug sections that are failing conversion.
 
-		// Do not match on status yet, we do not support status conversion.
-		// Expect(capiMachineSet.Status).To(Equal(in.machineSet.Status))
+		// Infrastructure machine template status comparison is not implemented yet.
 		// Expect(infraMachineTemplate.Status).To(Equal(in.infraMachineTemplate.Status))
 
 		capiMachineSet.Finalizers = nil
@@ -214,6 +215,17 @@ func CAPI2MAPIMachineSetRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv
 		Expect(capiMachineSet.ObjectMeta).To(Equal(in.machineSet.ObjectMeta))
 		Expect(capiMachineSet.Spec).To(Equal(in.machineSet.Spec))
 
+		// The conditions are not a 1:1 mapping conversion between CAPI and MAPI.
+		// So null them out to match the original nil fuzzing.
+		capiMachineSet.Status.Conditions = nil
+		capiMachineSet.Status.V1Beta2.Conditions = nil
+
+		// The status selector is computed based on the spec selector of the same object,
+		// so we don't want to compare it with the original object's status selector.
+		capiMachineSet.Status.Selector = ""
+
+		Expect(capiMachineSet.Status).To(Equal(in.machineSet.Status))
+
 		infraMachineTemplate.SetFinalizers(nil)
 		infraMachineTemplateJSON, err := json.Marshal(infraMachineTemplate)
 		Expect(err).ToNot(HaveOccurred())
@@ -229,7 +241,7 @@ func CAPI2MAPIMachineSetRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv
 
 // mapiToCapiMachineFuzzInput is a struct that holds the input for the MAPI to CAPI fuzz test.
 type mapiToCapiMachineFuzzInput struct {
-	machine                  *mapiv1.Machine
+	machine                  *mapiv1beta1.Machine
 	infra                    *configv1.Infrastructure
 	infraCluster             client.Object
 	mapiConverterConstructor MAPI2CAPIMachineConverterConstructor
@@ -245,7 +257,7 @@ func MAPI2CAPIMachineRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv1.I
 	fz := getFuzzer(scheme, fuzzerFuncs...)
 
 	for i := 0; i < 1000; i++ {
-		m := &mapiv1.Machine{}
+		m := &mapiv1beta1.Machine{}
 		fz.Fill(m)
 
 		in := mapiToCapiMachineFuzzInput{
@@ -274,7 +286,7 @@ func MAPI2CAPIMachineRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv1.I
 
 		// Break down the comparison to make it easier to debug sections that are failing conversion.
 
-		// Do not match on status yet, we do not support status conversion.
+		// Status comparison for machines is not implemented yet.
 		// Expect(mapiMachine.Status).To(Equal(in.machine.Status))
 
 		mapiMachine.Finalizers = nil
@@ -287,7 +299,7 @@ func MAPI2CAPIMachineRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv1.I
 
 // mapiToCapiMachineSetFuzzInput is a struct that holds the input for the MAPI to CAPI fuzz test.
 type mapiToCapiMachineSetFuzzInput struct {
-	machineSet               *mapiv1.MachineSet
+	machineSet               *mapiv1beta1.MachineSet
 	infra                    *configv1.Infrastructure
 	infraCluster             client.Object
 	mapiConverterConstructor MAPI2CAPIMachineSetConverterConstructor
@@ -303,7 +315,7 @@ func MAPI2CAPIMachineSetRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv
 	fz := getFuzzer(scheme, fuzzerFuncs...)
 
 	for i := 0; i < 1000; i++ {
-		m := &mapiv1.MachineSet{}
+		m := &mapiv1beta1.MachineSet{}
 		fz.Fill(m)
 
 		in := mapiToCapiMachineSetFuzzInput{
@@ -332,12 +344,12 @@ func MAPI2CAPIMachineSetRoundTripFuzzTest(scheme *runtime.Scheme, infra *configv
 
 		// Break down the comparison to make it easier to debug sections that are failing conversion.
 
-		// Do not match on status yet, we do not support status conversion.
-		// Expect(mapiMachineSet.Status).To(Equal(in.machineSet.Status))
+		// Status comparison temporarily disabled due to field differences between MAPI and CAPI
 
 		mapiMachineSet.Finalizers = nil
 		Expect(mapiMachineSet.TypeMeta).To(Equal(in.machineSet.TypeMeta), "converted MAPI machine set should have matching .typeMeta")
 		Expect(mapiMachineSet.ObjectMeta).To(Equal(in.machineSet.ObjectMeta), "converted MAPI machine set should have matching .metadata")
+		Expect(mapiMachineSet.Status).To(Equal(in.machineSet.Status), "converted MAPI machine set should have matching .status")
 		Expect(mapiMachineSet.Spec).To(WithTransform(ignoreMachineSetProviderSpec, testutils.MatchViaJSON(ignoreMachineSetProviderSpec(in.machineSet.Spec))), "converted MAPI machine set should have matching .spec")
 		Expect(mapiMachineSet.Spec.Template.Spec.ProviderSpec.Value.Raw).To(MatchJSON(in.machineSet.Spec.Template.Spec.ProviderSpec.Value.Raw), "converted MAPI machine set should have matching .spec.template.spec.providerSpec")
 	}, machineFuzzInputs)
@@ -358,7 +370,7 @@ func getFuzzer(scheme *runtime.Scheme, funcs ...fuzzer.FuzzerFuncs) *randfill.Fi
 
 // ignoreMachineProviderSpec returns a copy of the MachineSpec with the ProviderSpec field set to nil.
 // This is used so that we can separate the comparison of the ProviderSpec field.
-func ignoreMachineProviderSpec(in mapiv1.MachineSpec) mapiv1.MachineSpec {
+func ignoreMachineProviderSpec(in mapiv1beta1.MachineSpec) mapiv1beta1.MachineSpec {
 	out := in.DeepCopy()
 	out.ProviderSpec.Value = nil
 
@@ -367,7 +379,7 @@ func ignoreMachineProviderSpec(in mapiv1.MachineSpec) mapiv1.MachineSpec {
 
 // ignoreMachineSetProviderSpec returns a copy of the MachineSpec with the ProviderSpec field set to nil.
 // This is used so that we can separate the comparison of the ProviderSpec field.
-func ignoreMachineSetProviderSpec(in mapiv1.MachineSetSpec) mapiv1.MachineSetSpec {
+func ignoreMachineSetProviderSpec(in mapiv1beta1.MachineSetSpec) mapiv1beta1.MachineSetSpec {
 	out := in.DeepCopy()
 	out.Template.Spec.ProviderSpec.Value = nil
 
@@ -508,6 +520,34 @@ func CAPIMachineSetFuzzerFuncs(infraTemplateKind, infraAPIVersion, clusterName s
 
 				fuzzCAPIMachineSetSpecDeletePolicy(&m.DeletePolicy, c)
 			},
+			func(m *clusterv1.MachineSetStatus, c randfill.Continue) {
+				c.FillNoCustom(m)
+				m.Selector = ""          // Ignore, this field as it is not present in MAPI.
+				m.ObservedGeneration = 0 // Ignore, this field as it shouldn't match between CAPI and MAPI.
+				m.Conditions = nil       // Ignore, this field as it is not a 1:1 mapping between CAPI and MAPI but rather a recomputation of the conditions based on other fields.
+			},
+			func(m *clusterv1.MachineSetStatus, c randfill.Continue) {
+				// Deal with the V1Beta2 status field.
+				if m.V1Beta2 == nil {
+					m.V1Beta2 = &clusterv1.MachineSetV1Beta2Status{}
+				}
+
+				m.V1Beta2.Conditions = nil
+				m.V1Beta2.ReadyReplicas = ptr.To(m.ReadyReplicas)
+				m.V1Beta2.AvailableReplicas = ptr.To(m.AvailableReplicas)
+				// If the current MachineSet is a stand-alone MachineSet, the MachineSet controller does not set an up-to-date condition
+				// on its child Machines, allowing tools managing higher level abstractions to set this condition.
+				// This is also consistent with the fact that the MachineSet controller primarily takes care of the number of Machine
+				// replicas, it doesn't reconcile them (even if we have a few exceptions like in-place propagation of a few selected
+				// fields and remediation).
+				// So considering we don't use the MachineDeployments on the MAPI side
+				// and don't support "matching" higher level abstractions
+				// for the conversion of a MachineSet from MAPI to CAPI
+				// We always want to set this to zero on conversion.
+				// ref:
+				// https://github.com/kubernetes-sigs/cluster-api/blob/9c2eb0a04d5a03e18f2d557f1297391fb635f88d/internal/controllers/machineset/machineset_controller.go#L610-L618
+				m.V1Beta2.UpToDateReplicas = ptr.To(int32(0))
+			},
 			func(m *clusterv1.MachineSet, c randfill.Continue) {
 				c.FillNoCustom(m)
 
@@ -540,7 +580,7 @@ func MAPIMachineFuzzerFuncs(providerSpec runtime.Object, providerIDFuzz StringFu
 	return func(codecs runtimeserializer.CodecFactory) []interface{} {
 		return []interface{}{
 			// MAPI to CAPI conversion functions.
-			func(m *mapiv1.Machine, c randfill.Continue) {
+			func(m *mapiv1beta1.Machine, c randfill.Continue) {
 				c.FillNoCustom(m)
 				// The conversion library while converting
 				// machine labels and annotations from MAPI->CAPI merges the
@@ -554,7 +594,7 @@ func MAPIMachineFuzzerFuncs(providerSpec runtime.Object, providerIDFuzz StringFu
 				m.Spec.ObjectMeta.Annotations = util.DeepCopyMapStringString(m.Annotations)
 				m.Spec.ObjectMeta.Labels = util.DeepCopyMapStringString(m.Labels)
 			},
-			func(m *mapiv1.MachineSpec, c randfill.Continue) {
+			func(m *mapiv1beta1.MachineSpec, c randfill.Continue) {
 				c.FillNoCustom(m)
 				c.Fill(providerSpec)
 
@@ -582,7 +622,7 @@ func MAPIMachineFuzzerFuncs(providerSpec runtime.Object, providerIDFuzz StringFu
 				// Set the providerID to a valid providerID that will at least pass through the conversion.
 				m.ProviderID = ptr.To(providerIDFuzz(c))
 			},
-			func(hooks *mapiv1.LifecycleHooks, c randfill.Continue) {
+			func(hooks *mapiv1beta1.LifecycleHooks, c randfill.Continue) {
 				c.FillNoCustom(hooks)
 
 				// Clear the slices if they are empty.
@@ -605,7 +645,7 @@ func MAPIMachineSetFuzzerFuncs() fuzzer.FuzzerFuncs {
 	return func(codecs runtimeserializer.CodecFactory) []interface{} {
 		return []interface{}{
 			// MAPI to CAPI conversion functions.
-			func(m *mapiv1.MachineSetSpec, c randfill.Continue) {
+			func(m *mapiv1beta1.MachineSetSpec, c randfill.Continue) {
 				c.FillNoCustom(m)
 
 				// Clear fields that are not supported in the machine template objectmeta.
@@ -633,6 +673,14 @@ func MAPIMachineSetFuzzerFuncs() fuzzer.FuzzerFuncs {
 				// Clear the authoritative API since that's not relevant for conversion.
 				m.AuthoritativeAPI = ""
 			},
+			func(m *mapiv1beta1.MachineSetStatus, c randfill.Continue) {
+				c.FillNoCustom(m)
+
+				m.ObservedGeneration = 0     // Ignore, this field as it shouldn't match between CAPI and MAPI.
+				m.AuthoritativeAPI = ""      // Ignore, this field as it is not present in CAPI.
+				m.SynchronizedGeneration = 0 // Ignore, this field as it is not present in CAPI.
+				m.Conditions = nil           // Ignore, this field as it is not a 1:1 mapping between CAPI and MAPI but rather a recomputation of the conditions based on other fields.
+			},
 		}
 	}
 }
@@ -640,11 +688,11 @@ func MAPIMachineSetFuzzerFuncs() fuzzer.FuzzerFuncs {
 func fuzzMAPIMachineSetSpecDeletePolicy(deletePolicy *string, c randfill.Continue) {
 	switch c.Int31n(3) {
 	case 0:
-		*deletePolicy = string(mapiv1.RandomMachineSetDeletePolicy)
+		*deletePolicy = string(mapiv1beta1.RandomMachineSetDeletePolicy)
 	case 1:
-		*deletePolicy = string(mapiv1.NewestMachineSetDeletePolicy)
+		*deletePolicy = string(mapiv1beta1.NewestMachineSetDeletePolicy)
 	case 2:
-		*deletePolicy = string(mapiv1.OldestMachineSetDeletePolicy)
+		*deletePolicy = string(mapiv1beta1.OldestMachineSetDeletePolicy)
 		// case 3:
 		// 	*deletePolicy = "" // Do not fuzz MAPI MachineSetDeletePolicy to the empty value.
 		// It will otherwise get converted to CAPI RandomMachineSetDeletePolicy (default in CAPI) which
