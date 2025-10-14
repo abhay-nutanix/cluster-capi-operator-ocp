@@ -39,15 +39,15 @@ var _ = Describe("Cluster API Nutanix MachineSet", Ordered, func() {
 		if platform != configv1.NutanixPlatformType {
 			Skip("Skipping Nutanix E2E tests")
 		}
-		framework.DeleteMachineSets(cl, machineSet)
+		framework.DeleteMachineSets(ctx, cl, machineSet)
 		framework.WaitForMachineSetsDeleted(cl, machineSet)
-		framework.DeleteObjects(cl, nutanixMachineTemplate)
+		framework.DeleteObjects(ctx, cl, nutanixMachineTemplate)
 	})
 
 	It("should be able to run a machine", func() {
-		nutanixMachineTemplate = createNutanixMachineTemplate(cl, mapiSpec)
+		nutanixMachineTemplate = createNutanixMachineTemplate(ctx, cl, mapiSpec)
 
-		machineSet = framework.CreateMachineSet(cl, framework.NewMachineSetParams(
+		machineSet = framework.CreateMachineSet(ctx, cl, framework.NewMachineSetParams(
 			"nutanix-machineset",
 			clusterName,
 			"",
@@ -78,7 +78,7 @@ func getNutanixMAPIProviderSpec(cl client.Client) *mapiv1.NutanixMachineProvider
 	return providerSpec
 }
 
-func createNutanixMachineTemplate(cl client.Client, m *mapiv1.NutanixMachineProviderConfig) *nutanixv1.NutanixMachineTemplate {
+func createNutanixMachineTemplate(ctx context.Context, cl client.Client, m *mapiv1.NutanixMachineProviderConfig) *nutanixv1.NutanixMachineTemplate {
 	By("Creating Nutanix machine template")
 
 	Expect(m).ToNot(BeNil())
@@ -116,7 +116,7 @@ func createNutanixMachineTemplate(cl client.Client, m *mapiv1.NutanixMachineProv
 	capx.ObjectMeta.Name = nutanixMachineTemplateName
 	capx.ObjectMeta.Namespace = framework.CAPINamespace
 
-	Expect(cl.Create(context.Background(), capx)).To(Succeed())
+	Expect(cl.Create(ctx, capx)).To(Succeed())
 	return capx
 }
 

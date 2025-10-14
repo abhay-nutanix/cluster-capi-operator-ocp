@@ -1,0 +1,12 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: NutanixCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: openshift-cluster-api
+spec:
+  controlPlaneEndpoint:
+    host: "${CLUSTER_CONTROLPLANE_HOST}"
+    port: ${CLUSTER_CONTROLPLANE_PORT}
+  prismCentral:
+    address: ${PRISM_CENTRAL_ADDRESS}
+    port: ${PRISM_CENTRAL_PORT}

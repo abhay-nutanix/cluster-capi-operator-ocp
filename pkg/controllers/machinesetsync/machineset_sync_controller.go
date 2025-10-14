@@ -40,6 +40,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/go-test/deep"
+	nutanixv1 "github.com/nutanix-cloud-native/cluster-api-provider-nutanix/api/v1beta1"
 	machinev1applyconfigs "github.com/openshift/client-go/machine/applyconfigurations/machine/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -82,6 +83,9 @@ var (
 
 	// errAssertingCAPIOpenStackMachineTemplate is returned when we encounter an issue asserting a client.Object into a OpenStackMachineTemplate.
 	errAssertingCAPIOpenStackMachineTemplate = errors.New("error asserting the CAPI OpenStackMachineTemplate object")
+
+	// errAssertingCAPINutanixMachineTemplate is returned when we encounter an issue asserting a client.Object into a NutanixMachineTemplate.
+	errAssertingCAPINutanixMachineTemplate = errors.New("error asserting the CAPI NutanixMachineTemplate object")
 
 	// errUnsuportedOwnerKindForConversion is returned when the owner kind is not supported for conversion.
 	errUnsuportedOwnerKindForConversion = errors.New("unsupported owner kind for conversion")
@@ -384,6 +388,12 @@ func filterOutdatedInfraMachineTemplates(infraMachineTemplateList client.ObjectL
 				outdatedTemplates = append(outdatedTemplates, &template)
 			}
 		}
+	case *nutanixv1.NutanixMachineTemplateList:
+		for _, template := range list.Items {
+			if template.GetName() != newInfraMachineTemplateName {
+				outdatedTemplates = append(outdatedTemplates, &template)
+			}
+		}
 	default:
 		return nil, fmt.Errorf("%w: got unknown type %T", errUnexpectedInfraMachineTemplateListType, list)
 	}
@@ -681,6 +691,20 @@ func (r *MachineSetSyncReconciler) convertCAPIToMAPIMachineSet(capiMachineSet *c
 		return capi2mapi.FromMachineSetAndOpenStackMachineTemplateAndOpenStackCluster( //nolint: wrapcheck
 			capiMachineSet, machineTemplate, cluster,
 		).ToMachineSet()
+	case configv1.NutanixPlatformType:
+		machineTemplate, ok := infraMachineTemplate.(*nutanixv1.NutanixMachineTemplate)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w, expected NutanixMachineTemplate, got %T", errUnexpectedInfraMachineTemplateType, infraMachineTemplate)
+		}
+
+		cluster, ok := infraCluster.(*nutanixv1.NutanixCluster)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w, expected NutanixCluster, got %T", errUnexpectedInfraClusterType, infraCluster)
+		}
+
+		return capi2mapi.FromMachineSetAndNutanixMachineTemplateAndNutanixCluster( //nolint: wrapcheck
+			capiMachineSet, machineTemplate, cluster,
+		).ToMachineSet()
 	case configv1.PowerVSPlatformType:
 		machineTemplate, ok := infraMachineTemplate.(*ibmpowervsv1.IBMPowerVSMachineTemplate)
 		if !ok {
@@ -709,6 +733,8 @@ func (r *MachineSetSyncReconciler) convertMAPIToCAPIMachineSet(mapiMachineSet *m
 		return mapi2capi.FromOpenStackMachineSetAndInfra(mapiMachineSet, r.Infra).ToMachineSetAndMachineTemplate() //nolint:wrapcheck
 	case configv1.PowerVSPlatformType:
 		return mapi2capi.FromPowerVSMachineSetAndInfra(mapiMachineSet, r.Infra).ToMachineSetAndMachineTemplate() //nolint:wrapcheck
+	case configv1.NutanixPlatformType:
+		return mapi2capi.FromNutanixMachineSetAndInfra(mapiMachineSet, r.Infra).ToMachineSetAndMachineTemplate() //nolint:wrapcheck
 	default:
 		return nil, nil, nil, fmt.Errorf("%w: %s", errPlatformNotSupported, r.Platform)
 	}
@@ -1309,6 +1335,8 @@ func initInfraMachineTemplateListAndInfraClusterListFromProvider(platform config
 		return &awsv1.AWSMachineTemplateList{}, &awsv1.AWSClusterList{}, nil
 	case configv1.OpenStackPlatformType:
 		return &openstackv1.OpenStackMachineTemplateList{}, &openstackv1.OpenStackClusterList{}, nil
+	case configv1.NutanixPlatformType:
+		return &nutanixv1.NutanixMachineTemplateList{}, &nutanixv1.NutanixClusterList{}, nil
 	case configv1.PowerVSPlatformType:
 		return &ibmpowervsv1.IBMPowerVSMachineTemplateList{}, &ibmpowervsv1.IBMPowerVSClusterList{}, nil
 	default:
@@ -1354,6 +1382,28 @@ func compareCAPIInfraMachineTemplates(platform configv1.PlatformType, infraMachi
 		typedinfraMachineTemplate2, ok := infraMachineTemplate2.(*openstackv1.OpenStackMachineTemplate)
 		if !ok {
 			return nil, errAssertingCAPIOpenStackMachineTemplate
+		}
+
+		diff := make(map[string]any)
+
+		if diffSpec := deep.Equal(typedInfraMachineTemplate1.Spec, typedinfraMachineTemplate2.Spec); len(diffSpec) > 0 {
+			diff[".spec"] = diffSpec
+		}
+
+		if diffObjectMeta := deep.Equal(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
+			diff[".metadata"] = diffObjectMeta
+		}
+
+		return diff, nil
+	case configv1.NutanixPlatformType:
+		typedInfraMachineTemplate1, ok := infraMachineTemplate1.(*nutanixv1.NutanixMachineTemplate)
+		if !ok {
+			return nil, errAssertingCAPINutanixMachineTemplate
+		}
+
+		typedinfraMachineTemplate2, ok := infraMachineTemplate2.(*nutanixv1.NutanixMachineTemplate)
+		if !ok {
+			return nil, errAssertingCAPINutanixMachineTemplate
 		}
 
 		diff := make(map[string]any)

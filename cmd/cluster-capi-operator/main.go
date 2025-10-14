@@ -36,6 +36,7 @@ import (
 	klog "k8s.io/klog/v2"
 	"k8s.io/klog/v2/textlogger"
 
+	nutanixv1 "github.com/nutanix-cloud-native/cluster-api-provider-nutanix/api/v1beta1"
 	awsv1 "sigs.k8s.io/cluster-api-provider-aws/v2/api/v1beta2"
 	azurev1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 	gcpv1 "sigs.k8s.io/cluster-api-provider-gcp/api/v1beta1"
@@ -88,6 +89,7 @@ func initScheme(scheme *runtime.Scheme) {
 	utilruntime.Must(mapiv1.AddToScheme(scheme))
 	utilruntime.Must(mapiv1beta1.AddToScheme(scheme))
 	utilruntime.Must(metal3v1.AddToScheme(scheme))
+	utilruntime.Must(nutanixv1.AddToScheme(scheme))
 }
 
 //nolint:funlen
@@ -286,6 +288,9 @@ func setupPlatformReconcilers(mgr manager.Manager, infra *configv1.Infrastructur
 		setupWebhooks(mgr)
 	case configv1.BareMetalPlatformType:
 		setupReconcilers(mgr, infra, platform, &metal3v1.Metal3Cluster{}, containerImages, applyClient, apiextensionsClient, managedNamespace)
+		setupWebhooks(mgr)
+	case configv1.NutanixPlatformType:
+		setupReconcilers(mgr, infra, platform, &nutanixv1.NutanixCluster{}, containerImages, applyClient, apiextensionsClient, managedNamespace)
 		setupWebhooks(mgr)
 	default:
 		klog.Infof("Detected platform %q is not supported, skipping capi controllers setup", platform)

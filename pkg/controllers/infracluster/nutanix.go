@@ -17,6 +17,7 @@ package infracluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -24,10 +25,15 @@ import (
 	"github.com/go-logr/logr"
 	nutanixv1 "github.com/nutanix-cloud-native/cluster-api-provider-nutanix/api/v1beta1"
 	credentialTypes "github.com/nutanix-cloud-native/prism-go-client/environment/credentials"
+	corev1 "k8s.io/api/core/v1"
 	cerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+var (
+	errInfraPlatformStatusNil = errors.New("infrastructure PlatformStatus should not be nil")
 )
 
 // ensureNutanixCluster ensures the NutanixCluster cluster object exists.
@@ -57,36 +63,10 @@ func (r *InfraClusterController) ensureNutanixCluster(ctx context.Context, log l
 	}
 
 	if r.Infra.Status.PlatformStatus == nil {
-		return nil, fmt.Errorf("infrastructure PlatformStatus should not be nil")
+		return nil, errInfraPlatformStatusNil
 	}
 
-	// Build the NutanixCluster spec
-	clusterSpec := nutanixv1.NutanixClusterSpec{
-		ControlPlaneEndpoint: clusterv1.APIEndpoint{
-			Host: apiURL.Hostname(),
-			Port: int32(port),
-		},
-	}
-
-	// Add PrismCentral configuration if available in the Infrastructure spec
-	if r.Infra.Spec.PlatformSpec.Nutanix != nil && r.Infra.Spec.PlatformSpec.Nutanix.PrismCentral.Address != "" {
-		clusterSpec.PrismCentral = &credentialTypes.NutanixPrismEndpoint{
-			// Address holds the IP address or FQDN of the Nutanix Prism Central
-			Address: r.Infra.Spec.PlatformSpec.Nutanix.PrismCentral.Address,
-			Port:    r.Infra.Spec.PlatformSpec.Nutanix.PrismCentral.Port,
-		}
-	}
-
-	// Add failure domains if available in the Infrastructure spec
-	if r.Infra.Spec.PlatformSpec.Nutanix != nil && len(r.Infra.Spec.PlatformSpec.Nutanix.FailureDomains) > 0 {
-		failureDomains := make([]nutanixv1.NutanixFailureDomainConfig, 0, len(r.Infra.Spec.PlatformSpec.Nutanix.FailureDomains))
-		for _, fd := range r.Infra.Spec.PlatformSpec.Nutanix.FailureDomains {
-			failureDomains = append(failureDomains, nutanixv1.NutanixFailureDomainConfig{
-				Name: fd.Name,
-			})
-		}
-		clusterSpec.FailureDomains = failureDomains
-	}
+	clusterSpec := r.buildNutanixClusterSpec(apiURL.Hostname(), int32(port))
 
 	target = &nutanixv1.NutanixCluster{
 		ObjectMeta: metav1.ObjectMeta{
@@ -108,4 +88,38 @@ func (r *InfraClusterController) ensureNutanixCluster(ctx context.Context, log l
 	log.Info(fmt.Sprintf("InfraCluster '%s/%s' successfully created", defaultCAPINamespace, r.Infra.Status.InfrastructureName))
 
 	return target, nil
+}
+
+// buildNutanixClusterSpec builds the NutanixClusterSpec from the Infrastructure object.
+func (r *InfraClusterController) buildNutanixClusterSpec(host string, port int32) nutanixv1.NutanixClusterSpec {
+	clusterSpec := nutanixv1.NutanixClusterSpec{
+		ControlPlaneEndpoint: clusterv1.APIEndpoint{
+			Host: host,
+			Port: port,
+		},
+	}
+
+	// Add PrismCentral configuration if available in the Infrastructure spec
+	if r.Infra.Spec.PlatformSpec.Nutanix != nil && r.Infra.Spec.PlatformSpec.Nutanix.PrismCentral.Address != "" {
+		clusterSpec.PrismCentral = &credentialTypes.NutanixPrismEndpoint{
+			// Address holds the IP address or FQDN of the Nutanix Prism Central
+			Address: r.Infra.Spec.PlatformSpec.Nutanix.PrismCentral.Address,
+			Port:    r.Infra.Spec.PlatformSpec.Nutanix.PrismCentral.Port,
+		}
+	}
+
+	// Add failure domains if available in the Infrastructure spec
+	if r.Infra.Spec.PlatformSpec.Nutanix != nil && len(r.Infra.Spec.PlatformSpec.Nutanix.FailureDomains) > 0 {
+		failureDomains := make([]corev1.LocalObjectReference, 0, len(r.Infra.Spec.PlatformSpec.Nutanix.FailureDomains))
+
+		for _, fd := range r.Infra.Spec.PlatformSpec.Nutanix.FailureDomains {
+			failureDomains = append(failureDomains, corev1.LocalObjectReference{
+				Name: fd.Name,
+			})
+		}
+
+		clusterSpec.ControlPlaneFailureDomains = failureDomains
+	}
+
+	return clusterSpec
 }
