@@ -1344,6 +1344,62 @@ func initInfraMachineTemplateListAndInfraClusterListFromProvider(platform config
 	}
 }
 
+// normalizeNutanixMachineTemplateSpec returns a normalized copy of the NutanixMachineTemplateSpec
+// with nil slices replaced with empty slices for consistent comparison.
+// This prevents nil vs [] slice differences from causing unnecessary reconciliation loops.
+func normalizeNutanixMachineTemplateSpec(spec nutanixv1.NutanixMachineTemplateSpec) nutanixv1.NutanixMachineTemplateSpec {
+	normalized := spec
+
+	// Normalize the nested machine spec
+	if normalized.Template.Spec.DataDisks == nil {
+		normalized.Template.Spec.DataDisks = make([]nutanixv1.NutanixMachineVMDisk, 0)
+	}
+
+	if normalized.Template.Spec.GPUs == nil {
+		normalized.Template.Spec.GPUs = make([]nutanixv1.NutanixGPU, 0)
+	}
+
+	if normalized.Template.Spec.Subnets == nil {
+		normalized.Template.Spec.Subnets = make([]nutanixv1.NutanixResourceIdentifier, 0)
+	}
+
+	if normalized.Template.Spec.AdditionalCategories != nil && len(normalized.Template.Spec.AdditionalCategories) == 0 {
+		// For AdditionalCategories, ensure consistency when empty
+		normalized.Template.Spec.AdditionalCategories = make([]nutanixv1.NutanixCategoryIdentifier, 0)
+	}
+
+	return normalized
+}
+
+// compareNutanixInfraMachineTemplates compares two Nutanix infra machine templates and returns differences.
+func compareNutanixInfraMachineTemplates(infraMachineTemplate1, infraMachineTemplate2 client.Object) (map[string]any, error) {
+	typedInfraMachineTemplate1, ok := infraMachineTemplate1.(*nutanixv1.NutanixMachineTemplate)
+	if !ok {
+		return nil, errAssertingCAPINutanixMachineTemplate
+	}
+
+	typedinfraMachineTemplate2, ok := infraMachineTemplate2.(*nutanixv1.NutanixMachineTemplate)
+	if !ok {
+		return nil, errAssertingCAPINutanixMachineTemplate
+	}
+
+	// Normalize slice fields before comparison to prevent nil vs [] differences
+	normalizedSpec1 := normalizeNutanixMachineTemplateSpec(typedInfraMachineTemplate1.Spec)
+	normalizedSpec2 := normalizeNutanixMachineTemplateSpec(typedinfraMachineTemplate2.Spec)
+
+	diff := make(map[string]any)
+
+	if diffSpec := deep.Equal(normalizedSpec1, normalizedSpec2); len(diffSpec) > 0 {
+		diff[".spec"] = diffSpec
+	}
+
+	if diffObjectMeta := util.ObjectMetaEqual(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
+		diff[".metadata"] = diffObjectMeta
+	}
+
+	return diff, nil
+}
+
 // compareCAPIInfraMachineTemplates compares CAPI infra machine templates a and b, and returns a list of differences, or none if there are none.
 //
 //nolint:funlen
@@ -1390,33 +1446,13 @@ func compareCAPIInfraMachineTemplates(platform configv1.PlatformType, infraMachi
 			diff[".spec"] = diffSpec
 		}
 
-		if diffObjectMeta := deep.Equal(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
+		if diffObjectMeta := util.ObjectMetaEqual(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
 			diff[".metadata"] = diffObjectMeta
 		}
 
 		return diff, nil
 	case configv1.NutanixPlatformType:
-		typedInfraMachineTemplate1, ok := infraMachineTemplate1.(*nutanixv1.NutanixMachineTemplate)
-		if !ok {
-			return nil, errAssertingCAPINutanixMachineTemplate
-		}
-
-		typedinfraMachineTemplate2, ok := infraMachineTemplate2.(*nutanixv1.NutanixMachineTemplate)
-		if !ok {
-			return nil, errAssertingCAPINutanixMachineTemplate
-		}
-
-		diff := make(map[string]any)
-
-		if diffSpec := deep.Equal(typedInfraMachineTemplate1.Spec, typedinfraMachineTemplate2.Spec); len(diffSpec) > 0 {
-			diff[".spec"] = diffSpec
-		}
-
-		if diffObjectMeta := deep.Equal(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
-			diff[".metadata"] = diffObjectMeta
-		}
-
-		return diff, nil
+		return compareNutanixInfraMachineTemplates(infraMachineTemplate1, infraMachineTemplate2)
 	case configv1.PowerVSPlatformType:
 		typedInfraMachineTemplate1, ok := infraMachineTemplate1.(*ibmpowervsv1.IBMPowerVSMachineTemplate)
 		if !ok {
@@ -1434,7 +1470,7 @@ func compareCAPIInfraMachineTemplates(platform configv1.PlatformType, infraMachi
 			diff[".spec"] = diffSpec
 		}
 
-		if diffObjectMeta := deep.Equal(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
+		if diffObjectMeta := util.ObjectMetaEqual(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
 			diff[".metadata"] = diffObjectMeta
 		}
 

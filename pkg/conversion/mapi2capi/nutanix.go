@@ -49,6 +49,16 @@ type nutanixMachineSetAndInfra struct {
 	*nutanixMachineAndInfra
 }
 
+// ensureEmptySliceNotNil returns an empty slice instead of nil for consistent comparisons.
+// This prevents nil vs [] slice differences from causing unnecessary spec mutations.
+func ensureEmptySliceNotNil[T any](s []T) []T {
+	if s == nil {
+		return make([]T, 0)
+	}
+
+	return s
+}
+
 // FromNutanixMachineAndInfra wraps a Machine API Machine for Nutanix and the OCP Infrastructure object into a mapi2capi NutanixProviderSpec.
 func FromNutanixMachineAndInfra(m *mapiv1beta1.Machine, i *configv1.Infrastructure) Machine {
 	return &nutanixMachineAndInfra{machine: m, infrastructure: i}
@@ -176,6 +186,7 @@ func (m *nutanixMachineAndInfra) nutanixProviderSpecFromRawExtension(rawExtensio
 	return spec, nil
 }
 
+//nolint:funlen
 func (m *nutanixMachineAndInfra) toNutanixMachine(providerConfig *mapiv1.NutanixMachineProviderConfig) (*nutanixv1.NutanixMachine, []string, field.ErrorList) {
 	var errors field.ErrorList
 
@@ -196,11 +207,11 @@ func (m *nutanixMachineAndInfra) toNutanixMachine(providerConfig *mapiv1.Nutanix
 	cluster, errs := convertNutanixResourceIdentifierToCAPX(&providerConfig.Cluster)
 	errors = append(errors, errs...)
 
-	bootType, errs, warnings := convertNutanixBootTypeToCAPX(providerConfig.BootType, warnings)
+	bootType, errs, newWarnings := convertNutanixBootTypeToCAPX(providerConfig.BootType, warnings)
 	errors = append(errors, errs...)
-	warnings = append(warnings, warnings...)
+	warnings = append(warnings, newWarnings...)
 
-	project, errs := convertNutanixResourceIdentifierToCAPX(&providerConfig.Project)
+	project, errs := convertOptionalNutanixResourceIdentifierToCAPX(&providerConfig.Project)
 	errors = append(errors, errs...)
 
 	additionalCategories := convertCategoriesToCAPX(providerConfig.Categories)
@@ -218,6 +229,17 @@ func (m *nutanixMachineAndInfra) toNutanixMachine(providerConfig *mapiv1.Nutanix
 		Subnets:              subnets,
 		Project:              project,
 		AdditionalCategories: additionalCategories,
+	}
+
+	// Normalize nil vs empty slices for stable downstream comparisons.
+	// This is critical for preventing unnecessary spec mutations that cause reconciliation loops.
+	// Even though conversion functions already ensure empty slices, we normalize here as defensive programming.
+	spec.DataDisks = ensureEmptySliceNotNil(spec.DataDisks)
+	spec.GPUs = ensureEmptySliceNotNil(spec.GPUs)
+	spec.Subnets = ensureEmptySliceNotNil(spec.Subnets)
+
+	if spec.AdditionalCategories != nil {
+		spec.AdditionalCategories = ensureEmptySliceNotNil(spec.AdditionalCategories)
 	}
 
 	return &nutanixv1.NutanixMachine{
@@ -252,7 +274,7 @@ func convertSubnetsToCAPX(subnets []mapiv1.NutanixResourceIdentifier) ([]nutanix
 	result := make([]nutanixv1.NutanixResourceIdentifier, 0, len(subnets))
 
 	for _, s := range subnets {
-		conv, errs := convertNutanixResourceIdentifierToCAPX(&s)
+		conv, errs := convertOptionalNutanixResourceIdentifierToCAPX(&s)
 		errors = append(errors, errs...)
 
 		if conv != nil {
@@ -265,6 +287,13 @@ func convertSubnetsToCAPX(subnets []mapiv1.NutanixResourceIdentifier) ([]nutanix
 
 func convertDataDisksToCAPX(disks []mapiv1.NutanixVMDisk) ([]nutanixv1.NutanixMachineVMDisk, field.ErrorList) {
 	errors := field.ErrorList{}
+
+	// Always return a non-nil slice for consistent comparisons in downstream consumers.
+	// nil vs [] slice differences cause unnecessary spec mutations and reconciliation loops.
+	if len(disks) == 0 {
+		return make([]nutanixv1.NutanixMachineVMDisk, 0), errors
+	}
+
 	result := make([]nutanixv1.NutanixMachineVMDisk, 0, len(disks))
 
 	for _, d := range disks {
@@ -276,7 +305,7 @@ func convertDataDisksToCAPX(disks []mapiv1.NutanixVMDisk) ([]nutanixv1.NutanixMa
 		}
 	}
 
-	return result, errors
+	return ensureEmptySliceNotNil(result), errors
 }
 
 func convertCategoriesToCAPX(categories []mapiv1.NutanixCategory) []nutanixv1.NutanixCategoryIdentifier {
@@ -542,6 +571,18 @@ func convertNutanixResourceIdentifierToCAPX(identifier *mapiv1.NutanixResourceId
 	return &obj, errors
 }
 
+// convertOptionalNutanixResourceIdentifierToCAPX converts a NutanixResourceIdentifier but treats
+// empty type as "unspecified" and returns nil without error. This is suitable for optional fields
+// like Project and Subnets where a missing identifier should be ignored.
+func convertOptionalNutanixResourceIdentifierToCAPX(identifier *mapiv1.NutanixResourceIdentifier) (*nutanixv1.NutanixResourceIdentifier, field.ErrorList) {
+	errors := field.ErrorList{}
+	if identifier == nil || identifier.Type == "" {
+		return nil, errors
+	}
+
+	return convertNutanixResourceIdentifierToCAPX(identifier)
+}
+
 func convertNutanixBootTypeToCAPX(bootType mapiv1.NutanixBootType, warnings []string) (nutanixv1.NutanixBootType, field.ErrorList, []string) {
 	var capxBootType nutanixv1.NutanixBootType
 
@@ -556,15 +597,29 @@ func convertNutanixBootTypeToCAPX(bootType mapiv1.NutanixBootType, warnings []st
 		warnings = append(warnings, "SecureBoot boot type is not supported in CAPX, using Legacy boot type instead")
 		capxBootType = nutanixv1.NutanixBootTypeLegacy
 	default:
-		errors = append(errors, field.Invalid(field.NewPath("bootType"), bootType, "invalid boot type"))
+		// Treat empty bootType as unspecified and default to Legacy for compatibility.
+		if string(bootType) == "" {
+			warnings = append(warnings, "bootType not set; defaulting to Legacy")
+			capxBootType = nutanixv1.NutanixBootTypeLegacy
+		} else {
+			errors = append(errors, field.Invalid(field.NewPath("bootType"), bootType, "invalid boot type"))
+		}
 	}
 
 	return capxBootType, errors, warnings
 }
 
 func convertNutanixGPUToCAPX(gpus *[]mapiv1.NutanixGPU) (*[]nutanixv1.NutanixGPU, field.ErrorList) {
-	mapiGPUs := make([]nutanixv1.NutanixGPU, 0, len(*gpus))
 	errors := field.ErrorList{}
+
+	// Handle nil or empty input by returning pointer to a properly initialized empty slice.
+	// This prevents nil vs [] slice differences from causing unnecessary spec mutations.
+	if gpus == nil || len(*gpus) == 0 {
+		emptySlice := make([]nutanixv1.NutanixGPU, 0)
+		return &emptySlice, errors
+	}
+
+	mapiGPUs := make([]nutanixv1.NutanixGPU, 0, len(*gpus))
 
 	for _, g := range *gpus {
 		obj := nutanixv1.NutanixGPU{}

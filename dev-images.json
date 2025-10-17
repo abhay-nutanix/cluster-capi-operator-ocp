@@ -1,6 +1,6 @@
 {
   "cluster-kube-cluster-api-operator": "quay.io/kabhat/cluster-kube-cluster-api-operator:dev",
-  "cluster-capi-controllers": "quay.io/kabhat/cluster-capi-controllers:v1",
+  "cluster-capi-controllers": "registry.k8s.io/cluster-api/cluster-api-controller:v1.10.2",
   "aws-cluster-api-controllers": "quay.io/ademicev/cluster-api-provider-aws:latest",
   "azure-cluster-api-controllers": "quay.io/ademicev/cluster-api-provider-azure:latest",
   "gcp-cluster-api-controllers": "quay.io/ademicev/cluster-api-provider-gcp:latest",

@@ -38,6 +38,16 @@ var (
 	errCAPIMachineSetNutanixMachineTemplateNutanixClusterCannotBeNil = errors.New("provided MachineSet, NutanixMachineTemplate and NutanixCluster can not be nil")
 )
 
+// ensureEmptySliceNotNil returns an empty slice instead of nil for consistent comparisons.
+// This prevents nil vs [] slice differences from causing unnecessary spec mutations.
+func ensureEmptySliceNotNil[T any](s []T) []T {
+	if s == nil {
+		return make([]T, 0)
+	}
+
+	return s
+}
+
 // machineAndNutanixMachineAndNutanixCluster stores the details of a Cluster API Machine and NutanixMachine and NutanixCluster.
 type machineAndNutanixMachineAndNutanixCluster struct {
 	machine        *clusterv1.Machine
@@ -215,6 +225,17 @@ func (m machineAndNutanixMachineAndNutanixCluster) toProviderSpec() (*mapiv1.Nut
 		FailureDomain:     failureDomainRef,
 		CredentialsSecret: credSecretRef,
 		Categories:        categories,
+	}
+
+	// Normalize nil vs empty slices for stable downstream comparisons.
+	// This is critical for preventing unnecessary spec mutations that cause reconciliation loops.
+	// Even though conversion functions already ensure empty slices, we normalize here as defensive programming.
+	mapiProviderConfig.DataDisks = ensureEmptySliceNotNil(mapiProviderConfig.DataDisks)
+	mapiProviderConfig.GPUs = ensureEmptySliceNotNil(mapiProviderConfig.GPUs)
+	mapiProviderConfig.Subnets = ensureEmptySliceNotNil(mapiProviderConfig.Subnets)
+
+	if mapiProviderConfig.Categories != nil {
+		mapiProviderConfig.Categories = ensureEmptySliceNotNil(mapiProviderConfig.Categories)
 	}
 
 	if len(errors) > 0 {
@@ -508,8 +529,10 @@ func convertStorageConfig(sc *nutanixv1.NutanixMachineVMStorageConfig) (*mapiv1.
 
 func convertNutanixGPUToMapi(gpus *[]nutanixv1.NutanixGPU) (*[]mapiv1.NutanixGPU, field.ErrorList) {
 	errors := field.ErrorList{}
-	if gpus == nil {
-		return &[]mapiv1.NutanixGPU{}, errors
+
+	emptySlice := make([]mapiv1.NutanixGPU, 0)
+	if gpus == nil || len(*gpus) == 0 {
+		return &emptySlice, errors
 	}
 
 	mapiGPUs := make([]mapiv1.NutanixGPU, 0, len(*gpus))

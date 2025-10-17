@@ -32,6 +32,8 @@ func providerNameToImageKey(name string) string {
 		return "baremetal-cluster-api-controllers"
 	case "ibmcloud":
 		return "ibmcloud-cluster-api-controllers"
+	case "nutanix":
+		return "nutanix-cluster-api-controllers"
 	case "cluster-api":
 		return "cluster-capi-controllers"
 	default:
