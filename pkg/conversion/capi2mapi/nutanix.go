@@ -220,7 +220,7 @@ func (m machineAndNutanixMachineAndNutanixCluster) toProviderSpec() (*mapiv1.Nut
 		Project:           project,
 		BootType:          bootType,
 		DataDisks:         dataDisks,
-		GPUs:              *gpus,
+		GPUs:              gpus,
 		UserDataSecret:    userData,
 		FailureDomain:     failureDomainRef,
 		CredentialsSecret: credSecretRef,
@@ -527,12 +527,13 @@ func convertStorageConfig(sc *nutanixv1.NutanixMachineVMStorageConfig) (*mapiv1.
 	return storage, errors
 }
 
-func convertNutanixGPUToMapi(gpus *[]nutanixv1.NutanixGPU) (*[]mapiv1.NutanixGPU, field.ErrorList) {
+func convertNutanixGPUToMapi(gpus *[]nutanixv1.NutanixGPU) ([]mapiv1.NutanixGPU, field.ErrorList) {
 	errors := field.ErrorList{}
 
-	emptySlice := make([]mapiv1.NutanixGPU, 0)
+	// Always return a non-nil slice for consistent comparisons in downstream consumers.
+	// nil vs [] slice differences cause unnecessary spec mutations and reconciliation loops.
 	if gpus == nil || len(*gpus) == 0 {
-		return &emptySlice, errors
+		return make([]mapiv1.NutanixGPU, 0), errors
 	}
 
 	mapiGPUs := make([]mapiv1.NutanixGPU, 0, len(*gpus))
@@ -567,7 +568,7 @@ func convertNutanixGPUToMapi(gpus *[]nutanixv1.NutanixGPU) (*[]mapiv1.NutanixGPU
 		mapiGPUs = append(mapiGPUs, obj)
 	}
 
-	return &mapiGPUs, errors
+	return ensureEmptySliceNotNil(mapiGPUs), errors
 }
 
 func convertNutanixBootTypeToMapi(bootType nutanixv1.NutanixBootType) (mapiv1.NutanixBootType, field.ErrorList) {

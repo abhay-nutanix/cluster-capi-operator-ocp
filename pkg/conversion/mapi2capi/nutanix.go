@@ -238,7 +238,7 @@ func (m *nutanixMachineAndInfra) toNutanixMachine(providerConfig *mapiv1.Nutanix
 		BootType:             bootType,
 		SystemDiskSize:       providerConfig.SystemDiskSize,
 		DataDisks:            dataDisks,
-		GPUs:                 *gpus,
+		GPUs:                 gpus,
 		Subnets:              subnets,
 		Project:              project,
 		AdditionalCategories: additionalCategories,
@@ -622,14 +622,13 @@ func convertNutanixBootTypeToCAPX(bootType mapiv1.NutanixBootType, warnings []st
 	return capxBootType, errors, warnings
 }
 
-func convertNutanixGPUToCAPX(gpus *[]mapiv1.NutanixGPU) (*[]nutanixv1.NutanixGPU, field.ErrorList) {
+func convertNutanixGPUToCAPX(gpus *[]mapiv1.NutanixGPU) ([]nutanixv1.NutanixGPU, field.ErrorList) {
 	errors := field.ErrorList{}
 
-	// Handle nil or empty input by returning pointer to a properly initialized empty slice.
-	// This prevents nil vs [] slice differences from causing unnecessary spec mutations.
+	// Always return a non-nil slice for consistent comparisons in downstream consumers.
+	// nil vs [] slice differences cause unnecessary spec mutations and reconciliation loops.
 	if gpus == nil || len(*gpus) == 0 {
-		emptySlice := make([]nutanixv1.NutanixGPU, 0)
-		return &emptySlice, errors
+		return make([]nutanixv1.NutanixGPU, 0), errors
 	}
 
 	mapiGPUs := make([]nutanixv1.NutanixGPU, 0, len(*gpus))
@@ -663,5 +662,5 @@ func convertNutanixGPUToCAPX(gpus *[]mapiv1.NutanixGPU) (*[]nutanixv1.NutanixGPU
 		mapiGPUs = append(mapiGPUs, obj)
 	}
 
-	return &mapiGPUs, errors
+	return ensureEmptySliceNotNil(mapiGPUs), errors
 }
