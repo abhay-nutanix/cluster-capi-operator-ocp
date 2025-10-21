@@ -41,7 +41,13 @@ import (
 
 const (
 	nutanixProviderSpecKind = "NutanixMachineProviderConfig"
+	nutanixTemplateKind     = "NutanixMachineTemplate"
 )
+
+func nutanixProviderIDFuzzer(c randfill.Continue) string {
+	// Nutanix providerID format: nutanix://<cluster-uuid>/<vm-uuid>
+	return "nutanix://" + uuid.NewString() + "/" + uuid.NewString()
+}
 
 var _ = PDescribe("Nutanix Fuzz (mapi2capi)", func() {
 
@@ -78,7 +84,7 @@ var _ = PDescribe("Nutanix Fuzz (mapi2capi)", func() {
 			mapi2capi.FromNutanixMachineAndInfra,
 			fromMachineAndNutanixMachineAndNutanixCluster,
 			conversiontest.ObjectMetaFuzzerFuncs(mapiNamespace),
-			conversiontest.MAPIMachineFuzzerFuncs(&mapiv1.NutanixMachineProviderConfig{}, nutanixProviderIDFuzzer),
+			conversiontest.MAPIMachineFuzzerFuncs(&mapiv1.NutanixMachineProviderConfig{}, &mapiv1.NutanixMachineProviderStatus{}, nutanixProviderIDFuzzer),
 			nutanixProviderSpecFuzzerFuncs,
 		)
 	})
@@ -105,16 +111,12 @@ var _ = PDescribe("Nutanix Fuzz (mapi2capi)", func() {
 			mapi2capi.FromNutanixMachineSetAndInfra,
 			fromMachineSetAndNutanixMachineTemplateAndNutanixCluster,
 			conversiontest.ObjectMetaFuzzerFuncs(mapiNamespace),
-			conversiontest.MAPIMachineFuzzerFuncs(&mapiv1.NutanixMachineProviderConfig{}, nutanixProviderIDFuzzer),
+			conversiontest.MAPIMachineFuzzerFuncs(&mapiv1.NutanixMachineProviderConfig{}, &mapiv1.NutanixMachineProviderStatus{}, nutanixProviderIDFuzzer),
 			conversiontest.MAPIMachineSetFuzzerFuncs(),
 			nutanixProviderSpecFuzzerFuncs,
 		)
 	})
 })
-
-func nutanixProviderIDFuzzer(c randfill.Continue) string {
-	return "nutanix://" + uuid.NewString()
-}
 
 //nolint:funlen
 func nutanixProviderSpecFuzzerFuncs(codecs runtimeserializer.CodecFactory) []any {

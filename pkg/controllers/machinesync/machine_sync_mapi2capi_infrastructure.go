@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/go-test/deep"
+	nutanixv1 "github.com/nutanix-cloud-native/cluster-api-provider-nutanix/api/v1beta1"
 	configv1 "github.com/openshift/api/config/v1"
 	mapiv1beta1 "github.com/openshift/api/machine/v1beta1"
 	"github.com/openshift/cluster-capi-operator/pkg/util"
@@ -318,7 +319,8 @@ func compareCAPIInfraMachines(platform configv1.PlatformType, infraMachine1, inf
 		if diffStatus := deep.Equal(typedInfraMachine1.Status, typedinfraMachine2.Status); len(diffStatus) > 0 {
 			diff[".status"] = diffStatus
 		}
-
+	case configv1.NutanixPlatformType:
+		return compareNutanixInfraMachines(infraMachine1, infraMachine2)
 	default:
 		return nil, fmt.Errorf("%w: %s", errPlatformNotSupported, platform)
 	}
@@ -384,6 +386,25 @@ func setChangedCAPIInfraMachineStatusFields(platform configv1.PlatformType, exis
 		util.EnsureCAPIV1Beta2Conditions(existing, converted)
 
 		// Finally overwrite the entire existing status with the convertedCAPIMachine status.
+		existing.Status = converted.Status
+
+		return nil
+	case configv1.NutanixPlatformType:
+		existing, ok := existingCAPIInfraMachine.(*nutanixv1.NutanixMachine)
+		if !ok {
+			return errAssertingCAPINutanixMachine
+		}
+
+		converted, ok := convertedCAPIInfraMachine.(*nutanixv1.NutanixMachine)
+		if !ok {
+			return errAssertingCAPINutanixMachine
+		}
+
+		util.EnsureCAPIConditions(existing, converted)
+
+		// No need to merge v1beta2 conditions because they don't exist for NutanixMachine's.
+
+		// Finally overwrite the entire existingCAPIInfraMachine status with the convertedCAPIInfraMachine status.
 		existing.Status = converted.Status
 
 		return nil

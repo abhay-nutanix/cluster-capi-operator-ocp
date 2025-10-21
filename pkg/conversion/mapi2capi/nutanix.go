@@ -186,6 +186,19 @@ func (m *nutanixMachineAndInfra) nutanixProviderSpecFromRawExtension(rawExtensio
 	return spec, nil
 }
 
+func NutanixProviderStatusFromRawExtension(rawExtension *runtime.RawExtension) (*mapiv1.NutanixMachineProviderStatus, error) {
+	if rawExtension == nil {
+		return &mapiv1.NutanixMachineProviderStatus{}, nil
+	}
+
+	status := &mapiv1.NutanixMachineProviderStatus{}
+	if err := yaml.Unmarshal(rawExtension.Raw, &status); err != nil {
+		return &mapiv1.NutanixMachineProviderStatus{}, fmt.Errorf("error unmarshalling providerStatus: %w", err)
+	}
+
+	return status, nil
+}
+
 //nolint:funlen
 func (m *nutanixMachineAndInfra) toNutanixMachine(providerConfig *mapiv1.NutanixMachineProviderConfig) (*nutanixv1.NutanixMachine, []string, field.ErrorList) {
 	var errors field.ErrorList
