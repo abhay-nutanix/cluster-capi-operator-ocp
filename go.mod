@@ -11,6 +11,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.0
 	github.com/metal3-io/cluster-api-provider-metal3/api v1.10.1
+	github.com/nutanix-cloud-native/cluster-api-provider-nutanix v1.7.2
+	github.com/nutanix-cloud-native/prism-go-client v0.5.4
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.38.0
 	github.com/openshift/api v0.0.0-20250731015415-ed654edbd7c6

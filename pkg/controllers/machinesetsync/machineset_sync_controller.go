@@ -40,6 +40,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/go-test/deep"
+	nutanixv1 "github.com/nutanix-cloud-native/cluster-api-provider-nutanix/api/v1beta1"
 	machinev1applyconfigs "github.com/openshift/client-go/machine/applyconfigurations/machine/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -80,6 +81,9 @@ var (
 
 	// errAssertingCAPIOpenStackMachineTemplate is returned when we encounter an issue asserting a client.Object into a OpenStackMachineTemplate.
 	errAssertingCAPIOpenStackMachineTemplate = errors.New("error asserting the CAPI OpenStackMachineTemplate object")
+
+	// errAssertingCAPINutanixMachineTemplate is returned when we encounter an issue asserting a client.Object into a NutanixMachineTemplate.
+	errAssertingCAPINutanixMachineTemplate = errors.New("error asserting the CAPI NutanixMachineTemplate object")
 
 	// errUnsuportedOwnerKindForConversion is returned when the owner kind is not supported for conversion.
 	errUnsuportedOwnerKindForConversion = errors.New("unsupported owner kind for conversion")
@@ -382,6 +386,12 @@ func filterOutdatedInfraMachineTemplates(infraMachineTemplateList client.ObjectL
 				outdatedTemplates = append(outdatedTemplates, &template)
 			}
 		}
+	case *nutanixv1.NutanixMachineTemplateList:
+		for _, template := range list.Items {
+			if template.GetName() != newInfraMachineTemplateName {
+				outdatedTemplates = append(outdatedTemplates, &template)
+			}
+		}
 	default:
 		return nil, fmt.Errorf("%w: got unknown type %T", errUnexpectedInfraMachineTemplateListType, list)
 	}
@@ -679,6 +689,20 @@ func (r *MachineSetSyncReconciler) convertCAPIToMAPIMachineSet(capiMachineSet *c
 		return capi2mapi.FromMachineSetAndOpenStackMachineTemplateAndOpenStackCluster( //nolint: wrapcheck
 			capiMachineSet, machineTemplate, cluster,
 		).ToMachineSet()
+	case configv1.NutanixPlatformType:
+		machineTemplate, ok := infraMachineTemplate.(*nutanixv1.NutanixMachineTemplate)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w, expected NutanixMachineTemplate, got %T", errUnexpectedInfraMachineTemplateType, infraMachineTemplate)
+		}
+
+		cluster, ok := infraCluster.(*nutanixv1.NutanixCluster)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w, expected NutanixCluster, got %T", errUnexpectedInfraClusterType, infraCluster)
+		}
+
+		return capi2mapi.FromMachineSetAndNutanixMachineTemplateAndNutanixCluster( //nolint: wrapcheck
+			capiMachineSet, machineTemplate, cluster,
+		).ToMachineSet()
 	case configv1.PowerVSPlatformType:
 		machineTemplate, ok := infraMachineTemplate.(*ibmpowervsv1.IBMPowerVSMachineTemplate)
 		if !ok {
@@ -707,6 +731,8 @@ func (r *MachineSetSyncReconciler) convertMAPIToCAPIMachineSet(mapiMachineSet *m
 		return mapi2capi.FromOpenStackMachineSetAndInfra(mapiMachineSet, r.Infra).ToMachineSetAndMachineTemplate() //nolint:wrapcheck
 	case configv1.PowerVSPlatformType:
 		return mapi2capi.FromPowerVSMachineSetAndInfra(mapiMachineSet, r.Infra).ToMachineSetAndMachineTemplate() //nolint:wrapcheck
+	case configv1.NutanixPlatformType:
+		return mapi2capi.FromNutanixMachineSetAndInfra(mapiMachineSet, r.Infra).ToMachineSetAndMachineTemplate() //nolint:wrapcheck
 	default:
 		return nil, nil, nil, fmt.Errorf("%w: %s", errPlatformNotSupported, r.Platform)
 	}
@@ -1304,11 +1330,69 @@ func initInfraMachineTemplateListAndInfraClusterListFromProvider(platform config
 		return &awsv1.AWSMachineTemplateList{}, &awsv1.AWSClusterList{}, nil
 	case configv1.OpenStackPlatformType:
 		return &openstackv1.OpenStackMachineTemplateList{}, &openstackv1.OpenStackClusterList{}, nil
+	case configv1.NutanixPlatformType:
+		return &nutanixv1.NutanixMachineTemplateList{}, &nutanixv1.NutanixClusterList{}, nil
 	case configv1.PowerVSPlatformType:
 		return &ibmpowervsv1.IBMPowerVSMachineTemplateList{}, &ibmpowervsv1.IBMPowerVSClusterList{}, nil
 	default:
 		return nil, nil, fmt.Errorf("%w: %s", errPlatformNotSupported, platform)
 	}
+}
+
+// normalizeNutanixMachineTemplateSpec returns a normalized copy of the NutanixMachineTemplateSpec
+// with nil slices replaced with empty slices for consistent comparison.
+// This prevents nil vs [] slice differences from causing unnecessary reconciliation loops.
+func normalizeNutanixMachineTemplateSpec(spec nutanixv1.NutanixMachineTemplateSpec) nutanixv1.NutanixMachineTemplateSpec {
+	normalized := spec
+
+	// Normalize the nested machine spec
+	if normalized.Template.Spec.DataDisks == nil {
+		normalized.Template.Spec.DataDisks = make([]nutanixv1.NutanixMachineVMDisk, 0)
+	}
+
+	if normalized.Template.Spec.GPUs == nil {
+		normalized.Template.Spec.GPUs = make([]nutanixv1.NutanixGPU, 0)
+	}
+
+	if normalized.Template.Spec.Subnets == nil {
+		normalized.Template.Spec.Subnets = make([]nutanixv1.NutanixResourceIdentifier, 0)
+	}
+
+	if normalized.Template.Spec.AdditionalCategories != nil && len(normalized.Template.Spec.AdditionalCategories) == 0 {
+		// For AdditionalCategories, ensure consistency when empty
+		normalized.Template.Spec.AdditionalCategories = make([]nutanixv1.NutanixCategoryIdentifier, 0)
+	}
+
+	return normalized
+}
+
+// compareNutanixInfraMachineTemplates compares two Nutanix infra machine templates and returns differences.
+func compareNutanixInfraMachineTemplates(infraMachineTemplate1, infraMachineTemplate2 client.Object) (map[string]any, error) {
+	typedInfraMachineTemplate1, ok := infraMachineTemplate1.(*nutanixv1.NutanixMachineTemplate)
+	if !ok {
+		return nil, errAssertingCAPINutanixMachineTemplate
+	}
+
+	typedinfraMachineTemplate2, ok := infraMachineTemplate2.(*nutanixv1.NutanixMachineTemplate)
+	if !ok {
+		return nil, errAssertingCAPINutanixMachineTemplate
+	}
+
+	// Normalize slice fields before comparison to prevent nil vs [] differences
+	normalizedSpec1 := normalizeNutanixMachineTemplateSpec(typedInfraMachineTemplate1.Spec)
+	normalizedSpec2 := normalizeNutanixMachineTemplateSpec(typedinfraMachineTemplate2.Spec)
+
+	diff := make(map[string]any)
+
+	if diffSpec := deep.Equal(normalizedSpec1, normalizedSpec2); len(diffSpec) > 0 {
+		diff[".spec"] = diffSpec
+	}
+
+	if diffObjectMeta := util.ObjectMetaEqual(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
+		diff[".metadata"] = diffObjectMeta
+	}
+
+	return diff, nil
 }
 
 // compareCAPIInfraMachineTemplates compares CAPI infra machine templates a and b, and returns a list of differences, or none if there are none.
@@ -1357,11 +1441,13 @@ func compareCAPIInfraMachineTemplates(platform configv1.PlatformType, infraMachi
 			diff[".spec"] = diffSpec
 		}
 
-		if diffObjectMeta := deep.Equal(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
+		if diffObjectMeta := util.ObjectMetaEqual(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
 			diff[".metadata"] = diffObjectMeta
 		}
 
 		return diff, nil
+	case configv1.NutanixPlatformType:
+		return compareNutanixInfraMachineTemplates(infraMachineTemplate1, infraMachineTemplate2)
 	case configv1.PowerVSPlatformType:
 		typedInfraMachineTemplate1, ok := infraMachineTemplate1.(*ibmpowervsv1.IBMPowerVSMachineTemplate)
 		if !ok {
@@ -1379,7 +1465,7 @@ func compareCAPIInfraMachineTemplates(platform configv1.PlatformType, infraMachi
 			diff[".spec"] = diffSpec
 		}
 
-		if diffObjectMeta := deep.Equal(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
+		if diffObjectMeta := util.ObjectMetaEqual(typedInfraMachineTemplate1.ObjectMeta, typedinfraMachineTemplate2.ObjectMeta); len(diffObjectMeta) > 0 {
 			diff[".metadata"] = diffObjectMeta
 		}
 

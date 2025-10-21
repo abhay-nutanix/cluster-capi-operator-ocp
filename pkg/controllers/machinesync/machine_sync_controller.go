@@ -37,6 +37,7 @@ import (
 	"github.com/openshift/cluster-capi-operator/pkg/util"
 
 	"github.com/go-test/deep"
+	nutanixv1 "github.com/nutanix-cloud-native/cluster-api-provider-nutanix/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,6 +99,9 @@ var (
 
 	// errAssertingCAPIOpenStackMachine is returned when we encounter an issue asserting a client.Object into an OpenStackVSMachine.
 	errAssertingCAPIOpenStackMachine = errors.New("error asserting the Cluster API OpenStackMachine object")
+
+	// errAssertingCAPINutanixMachine is returned when we encounter an issue asserting a client.Object into an NutanixMachine.
+	errAssertingCAPINutanixMachine = errors.New("error asserting the Cluster API NutanixMachine object")
 
 	// errAssertingCAPIBMPowerVSMachine is returned when we encounter an issue asserting a client.Object into an IBMPowerVSMachine.
 	errAssertingCAPIIBMPowerVSMachine = errors.New("error asserting the Cluster API IBMPowerVSMachine object")
@@ -582,6 +586,8 @@ func (r *MachineSyncReconciler) convertMAPIToCAPIMachine(mapiMachine *mapiv1beta
 	switch r.Platform {
 	case configv1.AWSPlatformType:
 		return mapi2capi.FromAWSMachineAndInfra(mapiMachine, r.Infra).ToMachineAndInfrastructureMachine() //nolint:wrapcheck
+	case configv1.NutanixPlatformType:
+		return mapi2capi.FromNutanixMachineAndInfra(mapiMachine, r.Infra).ToMachineAndInfrastructureMachine() //nolint:wrapcheck
 	case configv1.OpenStackPlatformType:
 		return mapi2capi.FromOpenStackMachineAndInfra(mapiMachine, r.Infra).ToMachineAndInfrastructureMachine() //nolint:wrapcheck
 	case configv1.PowerVSPlatformType:
@@ -617,6 +623,18 @@ func (r *MachineSyncReconciler) convertCAPIToMAPIMachine(capiMachine *clusterv1.
 		}
 
 		return capi2mapi.FromMachineAndOpenStackMachineAndOpenStackCluster(capiMachine, openStackMachine, openStackCluster).ToMachine() //nolint:wrapcheck
+	case configv1.NutanixPlatformType:
+		nutanixMachine, ok := infraMachine.(*nutanixv1.NutanixMachine)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w, expected NutanixMachine, got %T", errUnexpectedInfraMachineType, infraMachine)
+		}
+
+		nutanixCluster, ok := infraCluster.(*nutanixv1.NutanixCluster)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w, expected NutanixCluster, got %T", errUnexpectedInfraClusterType, infraCluster)
+		}
+
+		return capi2mapi.FromMachineAndNutanixMachineAndNutanixCluster(capiMachine, nutanixMachine, nutanixCluster).ToMachine() //nolint:wrapcheck
 	default:
 		return nil, nil, fmt.Errorf("%w: %s", errPlatformNotSupported, r.Platform)
 	}
@@ -1229,6 +1247,61 @@ func (r *MachineSyncReconciler) ensureSyncFinalizer(ctx context.Context, mapiMac
 	return shouldRequeue, utilerrors.NewAggregate(errors)
 }
 
+func normalizeNutanixMachineSpec(spec nutanixv1.NutanixMachineSpec) nutanixv1.NutanixMachineSpec {
+	normalized := spec
+
+	// Ensure slice fields are never nil for consistent comparisons
+	if normalized.DataDisks == nil {
+		normalized.DataDisks = make([]nutanixv1.NutanixMachineVMDisk, 0)
+	}
+
+	if normalized.GPUs == nil {
+		normalized.GPUs = make([]nutanixv1.NutanixGPU, 0)
+	}
+
+	if normalized.Subnets == nil {
+		normalized.Subnets = make([]nutanixv1.NutanixResourceIdentifier, 0)
+	}
+
+	if normalized.AdditionalCategories != nil && len(normalized.AdditionalCategories) == 0 {
+		// For AdditionalCategories, we preserve the distinction between nil and empty
+		// based on mapi2capi behavior, but ensure consistency when empty
+		normalized.AdditionalCategories = make([]nutanixv1.NutanixCategoryIdentifier, 0)
+	}
+
+	return normalized
+}
+
+// compareNutanixInfraMachines compares two Nutanix infra machines and returns differences.
+func compareNutanixInfraMachines(infraMachine1, infraMachine2 client.Object) (map[string]any, error) {
+	typedInfraMachine1, ok := infraMachine1.(*nutanixv1.NutanixMachine)
+	if !ok {
+		return nil, errAssertingCAPINutanixMachine
+	}
+
+	typedinfraMachine2, ok := infraMachine2.(*nutanixv1.NutanixMachine)
+	if !ok {
+		return nil, errAssertingCAPINutanixMachine
+	}
+
+	// Normalize slice fields before comparison to prevent nil vs [] differences
+	// from causing unnecessary spec mutations. This ensures consistent behavior
+	// regardless of when the infra machines were created.
+	normalizedSpec1 := normalizeNutanixMachineSpec(typedInfraMachine1.Spec)
+	normalizedSpec2 := normalizeNutanixMachineSpec(typedinfraMachine2.Spec)
+
+	diff := make(map[string]any)
+	if diffSpec := deep.Equal(normalizedSpec1, normalizedSpec2); len(diffSpec) > 0 {
+		diff[".spec"] = diffSpec
+	}
+
+	if diffMetadata := util.ObjectMetaEqual(typedInfraMachine1.ObjectMeta, typedinfraMachine2.ObjectMeta); len(diffMetadata) > 0 {
+		diff[".metadata"] = diffMetadata
+	}
+
+	return diff, nil
+}
+
 // compareCAPIMachines compares CAPI machines a and b, and returns a list of differences, or none if there are none.
 func compareCAPIMachines(capiMachine1, capiMachine2 *clusterv1.Machine) map[string]any {
 	diff := make(map[string]any)
@@ -1300,6 +1373,81 @@ func compareMAPIMachines(a, b *mapiv1beta1.Machine) (map[string]any, error) {
 	}
 
 	return diff, nil
+}
+
+// compareCAPIInfraMachines compares CAPI infra machines a and b, and returns a list of differences, or none if there are none.
+//
+//nolint:funlen
+func compareCAPIInfraMachines(platform configv1.PlatformType, infraMachine1, infraMachine2 client.Object) (map[string]any, error) {
+	switch platform {
+	case configv1.AWSPlatformType:
+		typedInfraMachine1, ok := infraMachine1.(*awsv1.AWSMachine)
+		if !ok {
+			return nil, errAssertingCAPIAWSMachine
+		}
+
+		typedinfraMachine2, ok := infraMachine2.(*awsv1.AWSMachine)
+		if !ok {
+			return nil, errAssertingCAPIAWSMachine
+		}
+
+		diff := make(map[string]any)
+		if diffSpec := deep.Equal(typedInfraMachine1.Spec, typedinfraMachine2.Spec); len(diffSpec) > 0 {
+			diff[".spec"] = diffSpec
+		}
+
+		if diffMetadata := util.ObjectMetaEqual(typedInfraMachine1.ObjectMeta, typedinfraMachine2.ObjectMeta); len(diffMetadata) > 0 {
+			diff[".metadata"] = diffMetadata
+		}
+
+		return diff, nil
+	case configv1.OpenStackPlatformType:
+		typedInfraMachine1, ok := infraMachine1.(*openstackv1.OpenStackMachine)
+		if !ok {
+			return nil, errAssertingCAPIOpenStackMachine
+		}
+
+		typedinfraMachine2, ok := infraMachine2.(*openstackv1.OpenStackMachine)
+		if !ok {
+			return nil, errAssertingCAPIOpenStackMachine
+		}
+
+		diff := make(map[string]any)
+		if diffSpec := deep.Equal(typedInfraMachine1.Spec, typedinfraMachine2.Spec); len(diffSpec) > 0 {
+			diff[".spec"] = diffSpec
+		}
+
+		if diffMetadata := util.ObjectMetaEqual(typedInfraMachine1.ObjectMeta, typedinfraMachine2.ObjectMeta); len(diffMetadata) > 0 {
+			diff[".metadata"] = diffMetadata
+		}
+
+		return diff, nil
+	case configv1.NutanixPlatformType:
+		return compareNutanixInfraMachines(infraMachine1, infraMachine2)
+	case configv1.PowerVSPlatformType:
+		typedInfraMachine1, ok := infraMachine1.(*ibmpowervsv1.IBMPowerVSMachine)
+		if !ok {
+			return nil, errAssertingCAPIIBMPowerVSMachine
+		}
+
+		typedinfraMachine2, ok := infraMachine2.(*ibmpowervsv1.IBMPowerVSMachine)
+		if !ok {
+			return nil, errAssertingCAPIIBMPowerVSMachine
+		}
+
+		diff := make(map[string]any)
+		if diffSpec := deep.Equal(typedInfraMachine1.Spec, typedinfraMachine2.Spec); len(diffSpec) > 0 {
+			diff[".spec"] = diffSpec
+		}
+
+		if diffMetadata := util.ObjectMetaEqual(typedInfraMachine1.ObjectMeta, typedinfraMachine2.ObjectMeta); len(diffMetadata) > 0 {
+			diff[".metadata"] = diffMetadata
+		}
+
+		return diff, nil
+	default:
+		return nil, fmt.Errorf("%w: %s", errPlatformNotSupported, platform)
+	}
 }
 
 // ensureCAPIMachineStatusUpdated updates the CAPI machine status if changes are detected and conditions are met.
